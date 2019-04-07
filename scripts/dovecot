@@ -1,0 +1,19 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+declare -A PROTOCOLS=( [imap]=0 )
+
+while read USERNAME PROTOCOL OTHER
+do
+	[[ "$PROTOCOL" == "proto" ]] && continue
+	(( PROTOCOLS[$PROTOCOL]++ ))
+done < <(doveadm who -1 2>&-)
+
+echo "# HELP dovecot_clients Dovecot clients by protocol"
+echo "# TYPE dovecot_clients gauge"
+for PROTOCOL in "${!PROTOCOLS[@]}"
+do
+	echo "dovecot_clients{protocol=\"$PROTOCOL\"} ${PROTOCOLS[$PROTOCOL]}"
+done

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+ACTIVE=0
+FROZEN=0
+
+while read TIME SIZE ID ADDR OTHER
+do
+	if [[ "$OTHER" == "*** frozen ***" ]]
+	then
+		(( FROZEN++ ))
+	else
+		(( ACTIVE++ ))
+	fi
+done < <(exim -bpr | grep '<')
+
+cat <<EOF
+# HELP exim_mailqueue Exim mailqueue sizes by status
+# TYPE exim_mailqueue gauge
+exim_mailqueue{status="active"} $ACTIVE
+exim_mailqueue{status="frozen"} $FROZEN
+EOF

@@ -1,0 +1,51 @@
+#!/usr/bin/env python2
+
+import os
+
+LOG_FILE = "/var/log/mail.log"
+STATE_FILE = "/var/lib/prometheus-scripts/exim_spamstats.state"
+
+# inner state
+position = 0
+ham = 0
+spam = 0
+
+# open state file to read status
+if os.path.isfile( STATE_FILE ):
+	state_file = open( STATE_FILE, "r" )
+	position, ham, spam = map( int, state_file.readline().split( ":" ) )
+
+# check if the log is rotated
+if os.stat( LOG_FILE ).st_size < position:
+	# FIXME: search for the previous log file (it's not so trivial)
+	position = 0
+
+# open log and seek to the position
+log_file = open( LOG_FILE, "r" )
+log_file.seek( position )
+
+for line in log_file:
+	if not "spamd: result: " in line:
+		continue
+
+	if "GTUBE" in line:
+		continue
+
+	if "result: Y" in line:
+		spam += 1
+	else:
+		ham += 1
+
+position = log_file.tell()
+log_file.close()
+
+# create nice output for Prometheus
+print( "# HELP exim_spamstats Exim SPAM/HAM statistics" )
+print( "# TYPE exim_spamstats counter" )
+print( "exim_spamstats{type=\"ham\"} %d" % ( ham ) )
+print( "exim_spamstats{type=\"spam\"} %d" % ( spam ) )
+
+# update state file with the actual status
+state_file = open( STATE_FILE, "w" )
+state_file.write( "%d:%d:%d\n" % ( position, ham, spam ) )
+state_file.close()
