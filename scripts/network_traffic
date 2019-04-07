@@ -1,0 +1,51 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+# NOTE: Bash uses sint64 for integer arithmetic!
+
+declare -A TOTAL_BYTES
+declare -A TOTAL_PACKETS
+
+declare -A IPV6_BYTES
+declare -A IPV6_PACKETS
+
+# gather aggregated traffic (IPv4 and IPv6)
+while read IFACE IN_BYTES IN_PACKETS IN_ERRS IN_DROP IN_FIFO IN_FRAME IN_COMPRESSED IN_MCAST OUT_BYTES OUT_PACKETS OTHER
+do
+	IFACE="${IFACE%:}"
+	[[ "$IFACE" == "lo" ]] && continue
+	TOTAL_BYTES[$IFACE]=$(( IN_BYTES + OUT_BYTES ))
+	TOTAL_PACKETS[$IFACE]=$(( IN_PACKETS + OUT_PACKETS ))
+done < <(tail -n+3 /proc/net/dev)
+
+# gather IPv6 only traffic
+for IFACE in "${!TOTAL_BYTES[@]}"
+do
+	while read KEY VALUE
+	do
+		[[ "$KEY" =~ Octets$ ]] && (( IPV6_BYTES[$IFACE] += VALUE ))
+		[[ "$KEY" =~ Pkts$ ]] && (( IPV6_PACKETS[$IFACE] += VALUE ))
+	done < "/proc/net/dev_snmp6/$IFACE"
+
+	# if this interface has only IPv6 traffic then there is a chance that
+	# between reading /proc/net/dev and the interface specific file the
+	# counters are increased over the TOTAL_* values
+	(( IPV6_BYTES[$IFACE] > TOTAL_BYTES[$IFACE] )) && IPV6_BYTES[$IFACE]="${TOTAL_BYTES[$IFACE]}"
+	(( IPV6_PACKETS[$IFACE] > TOTAL_PACKETS[$IFACE] )) && IPV6_PACKETS[$IFACE]="${TOTAL_PACKETS[$IFACE]}"
+done
+
+# create output
+echo "# HELP network_traffic_bytes Network traffic in bytes for every interface by IP protocol"
+echo "# TYPE network_traffic_bytes counter"
+echo "# HELP network_traffic_packets Network traffic in packets for every interface by IP protocol"
+echo "# TYPE network_traffic_packets counter"
+
+for IFACE in "${!TOTAL_BYTES[@]}"
+do
+	echo "network_traffic_bytes{interface=\"$IFACE\",protocol=\"ipv4\"} $(( TOTAL_BYTES[$IFACE] - IPV6_BYTES[$IFACE] ))"
+	echo "network_traffic_packets{interface=\"$IFACE\",protocol=\"ipv4\"} $(( TOTAL_PACKETS[$IFACE] - IPV6_PACKETS[$IFACE] ))"
+	echo "network_traffic_bytes{interface=\"$IFACE\",protocol=\"ipv6\"} ${IPV6_BYTES[$IFACE]}"
+	echo "network_traffic_packets{interface=\"$IFACE\",protocol=\"ipv6\"} ${IPV6_PACKETS[$IFACE]}"
+done
