@@ -1,0 +1,59 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+DOVECOT_ROOT="/var/spool/mail"
+
+cat <<EOF
+# HELP dovecot_mailbox_size The size of Dovecot mailboxes
+# TYPE dovecot_mailbox_size gauge
+# HELP dovecot_mailbox_messages Total number of messages in mailboxes
+# TYPE dovecot_mailbox_messages gauge
+# HELP dovecot_mailbox_unseen Unseen messages in mailboxes
+# TYPE dovecot_mailbox_unseen gauge
+# HELP dovecot_mailbox_trash Total number of messages in Trash
+# TYPE dovecot_mailbox_trash gauge
+# HELP dovecot_mailbox_bad_lines Unparseable lines in the doveadm's output
+# TYPE dovecot_mailbox_bad_lines gauge
+EOF
+
+MESSAGE_REGEX="^(.*) messages=([0-9]+) unseen=([0-9]+) vsize=([0-9]+)"
+TRASH_REGEX="Trash|Junk|Törölt elemek"
+
+BAD_LINES=0
+
+for DIR in "$DOVECOT_ROOT"/*/*
+do
+	LOCAL_PART="${DIR##*/}"
+	DOMAIN="${DIR#$DOVECOT_ROOT/}"
+	DOMAIN="${DOMAIN%/*}"
+
+	SIZE=0
+	MESSAGES=0
+	UNSEEN=0
+	TRASH=0
+	while read LINE
+	do
+		if [[ "$LINE" =~ $MESSAGE_REGEX ]]
+		then
+			MAILBOX="${BASH_REMATCH[1]}"
+			MSGS="${BASH_REMATCH[2]}"
+			(( MESSAGES += MSGS ))
+			(( UNSEEN += ${BASH_REMATCH[3]} ))
+			(( SIZE += ${BASH_REMATCH[4]} ))
+
+			[[ "$MAILBOX" =~ $TRASH_REGEX ]] && (( TRASH += MSGS ))
+		else
+			echo "Oooooooooooooops"
+			(( BAD_LINES++ ))
+		fi
+	done < <(doveadm mailbox status -u "$LOCAL_PART@$DOMAIN" "messages unseen vsize" "*")
+
+	echo "dovecot_mailbox_size{mailbox=\"$LOCAL_PART@$DOMAIN\"} $SIZE"
+	echo "dovecot_mailbox_messages{mailbox=\"$LOCAL_PART@$DOMAIN\"} $MESSAGES"
+	echo "dovecot_mailbox_unseen{mailbox=\"$LOCAL_PART@$DOMAIN\"} $UNSEEN"
+	echo "dovecot_mailbox_trash{mailbox=\"$LOCAL_PART@$DOMAIN\"} $TRASH"
+done
+
+echo "dovecot_mailbox_bad_lines $BAD_LINES"
