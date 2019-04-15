@@ -1,8 +1,8 @@
 #!/usr/bin/env python2
 
 import os
+import re
 
-# NOTE: this expects to use a single log file for ClamAV and Exim!
 LOG_FILE = "/var/log/mail.log"
 STATE_FILE = "/var/lib/prometheus-scripts/exim_requests.state"
 
@@ -11,11 +11,12 @@ position = 0
 ham = 0
 spam = 0
 virus = 0
+auth_failed = 0
 
 # open state file to read status
 if os.path.isfile( STATE_FILE ):
 	state_file = open( STATE_FILE, "r" )
-	position, ham, spam, virus = map( int, state_file.readline().split( ":" ) )
+	position, ham, spam, virus, auth_failed = map( int, state_file.readline().split( ":" ) )
 
 # check if the log is rotated
 if os.stat( LOG_FILE ).st_size < position:
@@ -27,20 +28,27 @@ log_file = open( LOG_FILE, "r" )
 log_file.seek( position )
 
 for line in log_file:
-	if "spamd: result: " in line:
-		if "GTUBE" in line:
-			continue
+	if not "exim[" in line or re.search( "\[\d+\\\\\d+\]", line ):
+		continue
 
-		if "result: Y" in line:
+	if " <= " in line:
+		ham += 1
+		continue
+	
+	if " rejected after DATA: " in line:
+		is_spam = re.search( "This message is possibly spam! \\((\d+)", line )
+		if is_spam and int( is_spam.groups()[ 0 ] ) < 1000:
 			spam += 1
-		else:
-			ham += 1
-
-	if "clamd[" in line and "/exim/" in line:
-		if "Eicar" in line:
 			continue
 
-		virus += 1
+		if "This message contains a virus" in line and not "Eicar-Test-Signature" in line:
+			virus += 1
+			continue
+
+	if " authenticator failed for " in line:
+		auth_failed += 1
+		continue
+
 
 position = log_file.tell()
 log_file.close()
@@ -51,8 +59,9 @@ print( "# TYPE exim_requests counter" )
 print( "exim_requests{type=\"ham\"} %d" % ( ham ) )
 print( "exim_requests{type=\"spam\"} %d" % ( spam ) )
 print( "exim_requests{type=\"virus\"} %d" % ( virus ) )
+print( "exim_requests{type=\"auth_failed\"} %d" % ( auth_failed ) )
 
 # update state file with the actual status
 state_file = open( STATE_FILE, "w" )
-state_file.write( "%d:%d:%d:%d\n" % ( position, ham, spam, virus ) )
+state_file.write( "%d:%d:%d:%d:%d\n" % ( position, ham, spam, virus, auth_failed ) )
 state_file.close()
