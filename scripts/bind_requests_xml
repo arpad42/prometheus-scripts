@@ -1,0 +1,114 @@
+#!/bin/bash
+
+# NOTE: it uses curl and xmlstarlet, you have to install them before running this script!
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+# modify this settings to match your deployment
+BIND_STATISTICS_URL="http://[::1]:8053/"
+
+### helper functions
+# error message and exit
+error()
+{
+	echo "ERROR: $1" >&2
+	exit 1
+}
+
+# don't litter
+cleanup()
+{
+	[[ -n "$TEMP_DIR" ]] && rm -Rf "$TEMP_DIR"
+}
+
+### main code
+# create a temporary directory for the XML output (it can be large)
+TEMP_DIR="$(mktemp -t -d 'bind_requests_xml.XXXXXXXXXX')"
+
+# don't forget to cleanup our own mess
+trap cleanup EXIT
+
+# fetch the statistics in XML format
+curl --silent "$BIND_STATISTICS_URL" > "$TEMP_DIR/stats.xml"
+
+# if the file is empty then I can't do anything
+[[ -s "$TEMP_DIR/stats.xml" ]] || error "The XML file is empty (or missing)!"
+
+# figure out the XML version
+# the old version uses /isc/bind/statistics, the new one uses /statistics
+XML_VERSION="$(xmlstarlet select --text -t -m "/statistics" -v "@version" "$TEMP_DIR/stats.xml")"
+[[ -z "$XML_VERSION" ]] && XML_VERSION="$(xmlstarlet --text -t -m "/isc/bin/statistics" -v "@version" "$TEMP_DIR/stats.xml")"
+[[ -z "$XML_VERSION" ]] && error "Failed to fetch XML template version!"
+
+# NOTE: the quoting is intentionally missing here!
+if [[ "$XML_VERSION" = 2.* ]]
+then
+	:
+fi
+
+# NOTE: the quoting is intentionally missing here!
+if [[ "$XML_VERSION" = 3.* ]]
+then
+	# incoming requests
+	echo "# HELP bind_incoming_query Incoming queries by type"
+	echo "# TYPE bind_incoming_query counter"
+
+	xmlstarlet select --text -t -m "/statistics/server/counters[@type='qtype']/counter" -v "@name" -o " " -v "." --nl "$TEMP_DIR/stats.xml" | \
+	while read TYPE VALUE
+	do
+		echo "bind_incoming_query{type=\"$TYPE\"} $VALUE"
+	done
+
+	# outgoing rcodes (answers)
+	echo "# HELP bind_outgoing_rcode Outgoing queries sent by the bind daemon"
+	echo "# TYPE bind_outgoing_rcode counter"
+
+	xmlstarlet select --text -t -m "/statistics/server/counters[@type='rcode']/counter" -v "@name" -o " " -v "." --nl "$TEMP_DIR/stats.xml" | \
+	while read TYPE VALUE
+	do
+		[[ "$TYPE" == RESERVED* ]] && continue
+		[[ "$TYPE" =~ ^[0-9]+$ ]] && continue
+		echo "bind_outgoing_rcode{type=\"$TYPE\"} $VALUE"
+	done
+
+	# NOTE: the quoting is intentionally missing here!
+	VIEWS=( $(xmlstarlet select -t -m "/statistics/views/view" -v "@name"  --nl "$TEMP_DIR/stats.xml") )
+
+	# outgoing queries
+	echo "# HELP bind_outgoing_query Outgoing queries sent by the bind daemon"
+	echo "# TYPE bind_outgoing_query counter"
+
+	# cache information
+	echo "# HELP bind_cache Cache (authoritative) hits or misses"
+	echo "# TYPE bind_cache counter"
+	echo "# HELP bind_query_cache Query (resolver) cache hits or misses"
+	echo "# TYPE bind_query_cache counter"
+
+	for VIEW in "${VIEWS[@]}"
+	do
+		[[ "$VIEW" == "_bind" ]] && continue
+		# it's shown as default in the named stats file
+		[[ "$VIEW" == "_default" ]] && VIEW_STR="default" || VIEW_STR="$VIEW"
+
+		# outgoing queries
+		xmlstarlet select -t -m "/statistics/views/view[@name='$VIEW']/counters[@type='resqtype']/counter" -v "@name" -o " " -v "."  --nl "$TEMP_DIR/stats.xml" | \
+		while read TYPE VALUE
+		do
+			echo "bind_outgoing_query{view=\"$VIEW_STR\",type=\"$TYPE\"} $VALUE"
+		done
+
+		# cache information
+		xmlstarlet select -t -m "/statistics/views/view[@name='$VIEW']/counters[@type='cachestats']/counter" -v "@name" -o " " -v "."  --nl "$TEMP_DIR/stats.xml" | \
+		while read FIELD VALUE
+		do
+			case "$FIELD" in
+				CacheHits ) echo "bind_cache{view=\"$VIEW_STR\",result=\"hit\"} $VALUE" ;;
+				CacheMisses ) echo "bind_cache{view=\"$VIEW_STR\",result=\"miss\"} $VALUE" ;;
+				QueryHits ) echo "bind_query_cache{view=\"$VIEW_STR\",result=\"hit\"} $VALUE" ;;
+				QueryMisses ) echo "bind_query_cache{view=\"$VIEW_STR\",result=\"miss\"} $VALUE" ;;
+			esac
+		done
+	done
+
+fi
