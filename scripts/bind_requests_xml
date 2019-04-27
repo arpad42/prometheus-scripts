@@ -86,6 +86,7 @@ then
 		xmlstarlet select -t -m "/isc/bind/statistics/views/view[name='$VIEW']/rdtype" -v "name" -o " " -v "counter" --nl "$TEMP_DIR/stats.xml" | \
 		while read TYPE VALUE
 		do
+			[[ -z "$TYPE" ]] && continue
 			echo "bind_outgoing_query{view=\"$VIEW_STR\",type=\"$TYPE\"} $VALUE"
 		done
 
