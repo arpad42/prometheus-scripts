@@ -38,13 +38,58 @@ curl --silent "$BIND_STATISTICS_URL" > "$TEMP_DIR/stats.xml"
 # figure out the XML version
 # the old version uses /isc/bind/statistics, the new one uses /statistics
 XML_VERSION="$(xmlstarlet select --text -t -m "/statistics" -v "@version" "$TEMP_DIR/stats.xml")"
-[[ -z "$XML_VERSION" ]] && XML_VERSION="$(xmlstarlet --text -t -m "/isc/bin/statistics" -v "@version" "$TEMP_DIR/stats.xml")"
+[[ -z "$XML_VERSION" ]] && XML_VERSION="$(xmlstarlet select --text -t -m "/isc/bind/statistics" -v "@version" "$TEMP_DIR/stats.xml")"
 [[ -z "$XML_VERSION" ]] && error "Failed to fetch XML template version!"
 
 # NOTE: the quoting is intentionally missing here!
 if [[ "$XML_VERSION" = 2.* ]]
 then
-	:
+	# incoming requests
+	echo "# HELP bind_incoming_query Incoming queries by type"
+	echo "# TYPE bind_incoming_query counter"
+
+	xmlstarlet select --text -t -m "/isc/bind/statistics/server/queries-in/rdtype" -v "name" -o " " -v "counter" --nl "$TEMP_DIR/stats.xml" | \
+	while read TYPE VALUE
+	do
+		echo "bind_incoming_query{type=\"$TYPE\"} $VALUE"
+	done
+
+	# outgoing rcodes (answers)
+	echo "# HELP bind_outgoing_rcode Answers sent by the bind daemon"
+	echo "# TYPE bind_outgoing_rcode counter"
+
+	xmlstarlet select --text -t -m "/isc/bind/statistics/server/nsstat" -v "name" -o " " -v "counter" --nl "$TEMP_DIR/stats.xml" | grep ^Qry | \
+	while read TYPE VALUE
+	do
+		TYPE="${TYPE#Qry}"
+		[[ "$TYPE" == "AuthAns" ]] || [[ "$TYPE" == "NoauthAns" ]] || [[ "$TYPE" == "Recursion" ]] && continue
+		[[ "$TYPE" == "Success" ]] && TYPE="NOERROR"
+		echo "bind_outgoing_rcode{type=\"$TYPE\"} $VALUE"
+	done
+
+	# NOTE: the quoting is intentionally missing here!
+	VIEWS=( $(xmlstarlet select -t -m "/isc/bind/statistics/views/view" -v "name" --nl "$TEMP_DIR/stats.xml") )
+
+	# outgoing queries
+	echo "# HELP bind_outgoing_query Outgoing queries sent by the bind daemon"
+	echo "# TYPE bind_outgoing_query counter"
+
+	# NOTE: no cache information in v2 XMLs :-(
+
+	for VIEW in "${VIEWS[@]}"
+	do
+		[[ "$VIEW" == "_bind" ]] && continue
+		# it's shown as default in the named stats file
+		[[ "$VIEW" == "_default" ]] && VIEW_STR="default" || VIEW_STR="$VIEW"
+
+		# outgoing queries
+		xmlstarlet select -t -m "/isc/bind/statistics/views/view[name='$VIEW']/rdtype" -v "name" -o " " -v "counter" --nl "$TEMP_DIR/stats.xml" | \
+		while read TYPE VALUE
+		do
+			echo "bind_outgoing_query{view=\"$VIEW_STR\",type=\"$TYPE\"} $VALUE"
+		done
+
+	done
 fi
 
 # NOTE: the quoting is intentionally missing here!
@@ -61,7 +106,7 @@ then
 	done
 
 	# outgoing rcodes (answers)
-	echo "# HELP bind_outgoing_rcode Outgoing queries sent by the bind daemon"
+	echo "# HELP bind_outgoing_rcode Answers sent by the bind daemon"
 	echo "# TYPE bind_outgoing_rcode counter"
 
 	xmlstarlet select --text -t -m "/statistics/server/counters[@type='rcode']/counter" -v "@name" -o " " -v "." --nl "$TEMP_DIR/stats.xml" | \
