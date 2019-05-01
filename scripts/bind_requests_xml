@@ -58,13 +58,28 @@ then
 	echo "# HELP bind_outgoing_rcode Answers sent by the bind daemon"
 	echo "# TYPE bind_outgoing_rcode counter"
 
-	xmlstarlet select --text -t -m "/isc/bind/statistics/server/nsstat" -v "name" -o " " -v "counter" --nl "$TEMP_DIR/stats.xml" | grep ^Qry | \
+	# incoming requests by protocol
+	echo "# HELP bind_incoming_l2 Incoming requests by IP version"
+	echo "# TYPE bind_incoming_l2 counter"
+
+	echo "# HELP bind_incoming_l3 Incoming requests by transport protocol"
+	echo "# TYPE bind_incoming_l3 counter"
+
+	xmlstarlet select --text -t -m "/isc/bind/statistics/server/nsstat" -v "name" -o " " -v "counter" --nl "$TEMP_DIR/stats.xml" | 
 	while read TYPE VALUE
 	do
-		TYPE="${TYPE#Qry}"
-		[[ "$TYPE" == "AuthAns" ]] || [[ "$TYPE" == "NoauthAns" ]] || [[ "$TYPE" == "Recursion" ]] && continue
-		[[ "$TYPE" == "Success" ]] && TYPE="NOERROR"
-		echo "bind_outgoing_rcode{type=\"$TYPE\"} $VALUE"
+		case "$TYPE" in
+			Qry* )
+				TYPE="${TYPE#Qry}"
+				[[ "$TYPE" == "AuthAns" ]] || [[ "$TYPE" == "NoauthAns" ]] || [[ "$TYPE" == "Recursion" ]] && continue
+				[[ "$TYPE" == "Success" ]] && TYPE="NOERROR"
+
+				echo "bind_outgoing_rcode{type=\"$TYPE\"} $VALUE"
+				;;
+			Requestv4 ) echo "bind_incoming_l2{protocol=\"ipv4\"} $VALUE" ;;
+			Requestv6 ) echo "bind_incoming_l2{protocol=\"ipv6\"} $VALUE" ;;
+			ReqTCP ) echo "bind_incoming_l3{protocol=\"tcp\"} $VALUE" ;;
+		esac
 	done
 
 	# NOTE: the quoting is intentionally missing here!
@@ -116,6 +131,28 @@ then
 		[[ "$TYPE" == RESERVED* ]] && continue
 		[[ "$TYPE" =~ ^[0-9]+$ ]] && continue
 		echo "bind_outgoing_rcode{type=\"$TYPE\"} $VALUE"
+	done
+
+	# incoming requests by protocol
+	echo "# HELP bind_incoming_l2 Incoming requests by IP version"
+	echo "# TYPE bind_incoming_l2 counter"
+
+	echo "# HELP bind_incoming_l3 Incoming requests by transport protocol"
+	echo "# TYPE bind_incoming_l3 counter"
+
+	echo "# HELP bind_outgoing_l3 Outgoing requests by transport protocol"
+	echo "# TYPE bind_outgoing_l3 counter"
+
+	xmlstarlet select --text -t -m "/statistics/server/counters[@type='nsstat']/counter" -v "@name" -o " " -v "." --nl "$TEMP_DIR/stats.xml" | \
+	while read TYPE VALUE
+	do
+		case "$TYPE" in
+			Requestv4 ) echo "bind_incoming_l2{protocol=\"ipv4\"} $VALUE" ;;
+			Requestv6 ) echo "bind_incoming_l2{protocol=\"ipv6\"} $VALUE" ;;
+			ReqTCP ) echo "bind_incoming_l3{protocol=\"tcp\"} $VALUE" ;;
+			QryUDP ) echo "bind_outgoing_l3{protocol=\"udp\"} $VALUE" ;;
+			QryTCP ) echo "bind_outgoing_l3{protocol=\"tcp\"} $VALUE" ;;
+		esac
 	done
 
 	# NOTE: the quoting is intentionally missing here!
