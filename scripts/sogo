@@ -1,0 +1,81 @@
+#!/usr/bin/env python2
+
+import os
+import re
+import json
+
+LOG_FILE = "/var/log/sogo/sogo.log"
+STATE_FILE = "/var/lib/prometheus-scripts/sogo.state"
+
+# inner state
+data = {}
+data[ "position" ] = 0
+data[ "methods" ] = {}
+data[ "subsystems" ] = { "activesync": 0, "calendar": 0, "contacts": 0, "other": 0 }
+data[ "events" ] = { "no_child": 0, "oom": 0 }
+
+# open state file to read status
+if os.path.isfile( STATE_FILE ):
+	with open( STATE_FILE, "r" ) as state_file:
+		data = json.load( state_file )
+
+# check if the log is rotated
+if os.stat( LOG_FILE ).st_size < data[ "position" ]:
+	# FIXME: search for the previous log file (it's not so trivial)
+	data[ "position" ] = 0
+
+# open log and seek to the position
+log_file = open( LOG_FILE, "r" )
+log_file.seek( data[ "position" ] )
+
+for line in log_file:
+	if "HTTP/" in line:
+		method = re.search( "\"(.*?) /SOGo", line ).groups()[ 0 ]
+		if not method in data[ "methods" ]:
+			data[ "methods" ][ method ] = 0
+		data[ "methods" ][ method ] += 1
+
+		if "/Microsoft-Server-ActiveSync" in line:
+			data[ "subsystems" ][ "activesync" ] += 1
+			continue
+
+		if "/Calendar" in line:
+			data[ "subsystems" ][ "calendar" ] += 1
+			continue
+		if "/Contacts" in line:
+			data[ "subsystems" ][ "contacts" ] += 1
+			continue
+
+		data[ "subsystems" ][ "other" ] += 1
+
+	if "No child available to handle incoming request!" in line:
+		data[ "events" ][ "no_child" ] += 1
+		continue
+
+	if "terminating app, vMem size limit" in line:
+		data[ "events" ][ "oom" ] += 1
+		continue
+
+
+data[ "position" ] = log_file.tell()
+log_file.close()
+
+# create nice output for Prometheus
+print( "# HELP sogo_method Queries by HTTP methods" )
+print( "# TYPE sogo_method counter" )
+for method, value in data[ "methods" ].iteritems():
+	print( "sogo_method{method=\"%s\"} %d" % ( method, value ) )
+
+print( "# HELP sogo_subsystem Queries by SOGo subsystems" )
+print( "# TYPE sogo_subsystem counter" )
+for subsystem, value in data[ "subsystems" ].iteritems():
+	print( "sogo_subsystem{subsystem=\"%s\"} %d" % ( subsystem, value ) )
+
+print( "# HELP sogo_worker_events Events about Sogo workers" )
+print( "# TYPE sogo_worker_events counter" )
+for event, value in data[ "events" ].iteritems():
+	print( "sogo_worker_events{event=\"%s\"} %d" % ( event, value ) )
+
+# update state file with the actual status
+with open( STATE_FILE, "w" ) as state_file:
+	json.dump( data, state_file, sort_keys = True )
