@@ -30,7 +30,7 @@ log_file.seek( data[ "position" ] )
 
 for line in log_file:
 	if "HTTP/" in line:
-		method = re.search( "\"(.*?) /SOGo", line ).groups()[ 0 ]
+		method = re.search( "\"([A-Z]+) /SOGo", line ).groups()[ 0 ]
 		if not method in data[ "methods" ]:
 			data[ "methods" ][ method ] = 0
 		data[ "methods" ][ method ] += 1
