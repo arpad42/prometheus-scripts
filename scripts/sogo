@@ -4,12 +4,12 @@ import os
 import re
 import json
 
-LOG_FILE = "/var/log/sogo/sogo.log"
+LOG_FILES = [ "/var/log/sogo/sogo.log", "/var/log/sogo/sogo-eas.log" ]
 STATE_FILE = "/var/lib/prometheus-scripts/sogo.state"
 
 # inner state
 data = {}
-data[ "position" ] = 0
+data[ "files" ] = {}
 data[ "methods" ] = {}
 data[ "subsystems" ] = { "activesync": 0, "calendar": 0, "contacts": 0, "other": 0 }
 data[ "events" ] = { "no_child": 0, "oom": 0 }
@@ -19,46 +19,52 @@ if os.path.isfile( STATE_FILE ):
 	with open( STATE_FILE, "r" ) as state_file:
 		data = json.load( state_file )
 
-# check if the log is rotated
-if os.stat( LOG_FILE ).st_size < data[ "position" ]:
-	# FIXME: search for the previous log file (it's not so trivial)
-	data[ "position" ] = 0
+for log_file_name in LOG_FILES:
+	# fetch the previous position (if exists)
+	if log_file_name in data[ "files" ]:
+		position = data[ "files" ][ log_file_name ]
+	else:
+		position = 0
 
-# open log and seek to the position
-log_file = open( LOG_FILE, "r" )
-log_file.seek( data[ "position" ] )
+	# check if the log is rotated
+	if os.stat( log_file_name ).st_size < position:
+		# FIXME: search for the previous log file (it's not so trivial)
+		position = 0
 
-for line in log_file:
-	if "HTTP/" in line:
-		method = re.search( "\"([A-Z]+) /SOGo", line ).groups()[ 0 ]
-		if not method in data[ "methods" ]:
-			data[ "methods" ][ method ] = 0
-		data[ "methods" ][ method ] += 1
+	# open log and seek to the position
+	log_file = open( log_file_name, "r" )
+	log_file.seek( position )
 
-		if "/Microsoft-Server-ActiveSync" in line:
-			data[ "subsystems" ][ "activesync" ] += 1
+	for line in log_file:
+		if "HTTP/" in line:
+			method = re.search( "\"([A-Z]+) /SOGo", line ).groups()[ 0 ]
+			if not method in data[ "methods" ]:
+				data[ "methods" ][ method ] = 0
+			data[ "methods" ][ method ] += 1
+
+			if "/Microsoft-Server-ActiveSync" in line:
+				data[ "subsystems" ][ "activesync" ] += 1
+				continue
+
+			if "/Calendar" in line:
+				data[ "subsystems" ][ "calendar" ] += 1
+				continue
+			if "/Contacts" in line:
+				data[ "subsystems" ][ "contacts" ] += 1
+				continue
+
+			data[ "subsystems" ][ "other" ] += 1
+
+		if "No child available to handle incoming request!" in line:
+			data[ "events" ][ "no_child" ] += 1
 			continue
 
-		if "/Calendar" in line:
-			data[ "subsystems" ][ "calendar" ] += 1
-			continue
-		if "/Contacts" in line:
-			data[ "subsystems" ][ "contacts" ] += 1
+		if "terminating app, vMem size limit" in line:
+			data[ "events" ][ "oom" ] += 1
 			continue
 
-		data[ "subsystems" ][ "other" ] += 1
-
-	if "No child available to handle incoming request!" in line:
-		data[ "events" ][ "no_child" ] += 1
-		continue
-
-	if "terminating app, vMem size limit" in line:
-		data[ "events" ][ "oom" ] += 1
-		continue
-
-
-data[ "position" ] = log_file.tell()
-log_file.close()
+	data[ "files" ][ log_file_name ] = log_file.tell()
+	log_file.close()
 
 # create nice output for Prometheus
 print( "# HELP sogo_method Queries by HTTP methods" )
