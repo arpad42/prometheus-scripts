@@ -37,7 +37,12 @@ for log_file_name in LOG_FILES:
 
 	for line in log_file:
 		if "HTTP/" in line:
-			method = re.search( "\"([A-Z]+) /SOGo", line ).groups()[ 0 ]
+			method = re.search( "\"([A-Z]+) /SOGo", line )
+			if method:
+				method = method.groups()[ 0 ]
+			else:
+				continue
+
 			if not method in data[ "methods" ]:
 				data[ "methods" ][ method ] = 0
 			data[ "methods" ][ method ] += 1
