@@ -2,66 +2,117 @@
 
 import os
 import re
+import json
 
 LOG_FILE = "/var/log/mail.log"
 STATE_FILE = "/var/lib/prometheus-scripts/exim_requests.state"
+EXIM_SPAM_STRING = "<CHANGEME>"
+ESET_MDA = True
+ESET_MDA_STRING = " P=esets-scanned "
 
 # inner state
-position = 0
-ham = 0
-spam = 0
-virus = 0
-auth_failed = 0
+data = {}
+data[ "position" ] = 0
+data[ "ham" ] = 0
+data[ "spam" ] = {}
+data[ "spam" ][ "exim" ] = 0
+data[ "spam" ][ "spamassassin" ] = 0
+data[ "virus" ] = {}
+data[ "virus" ][ "clamav" ] = 0
+data[ "auth_failed" ] = 0
+
+# add ESET counters if necessary
+if ESET_MDA:
+	data[ "spam" ][ "eset" ] = 0
+	data[ "virus" ][ "eset" ] = 0
 
 # open state file to read status
 if os.path.isfile( STATE_FILE ):
-	state_file = open( STATE_FILE, "r" )
-	position, ham, spam, virus, auth_failed = map( int, state_file.readline().split( ":" ) )
+	with open( STATE_FILE, "r" ) as state_file:
+		data = json.load( state_file )
 
 # check if the log is rotated
-if os.stat( LOG_FILE ).st_size < position:
+if os.stat( LOG_FILE ).st_size < data[ "position" ]:
 	# FIXME: search for the previous log file (it's not so trivial)
 	position = 0
 
 # open log and seek to the position
 log_file = open( LOG_FILE, "r" )
-log_file.seek( position )
+log_file.seek( data[ "position" ] )
 
 for line in log_file:
-	if not "exim[" in line or re.search( "\[\d+\\\\\d+\]", line ):
-		continue
+	# ESET log lines (if it's installed using MDA)
+	if ESET_MDA and "esets_daemon[" in line and "summ[" in line:
 
-	if " <= " in line:
-		ham += 1
-		continue
-	
-	if " rejected after DATA: " in line:
-		is_spam = re.search( "This message is possibly spam! \\((\d+)", line )
-		if is_spam and int( is_spam.groups()[ 0 ] ) < 1000:
-			spam += 1
+		# check if it contained a virus or not
+		has_virus = re.search( "virus=\"(.+?)\"", line )
+		if has_virus and has_virus.groups()[ 0 ] != "is OK":
+			data[ "virus" ][ "eset" ] += 1
 			continue
 
-		if "This message contains a virus" in line and not "Eicar-Test-Signature" in line:
-			virus += 1
+		# check if it was SPAM or not
+		# unfortunately we only can check if the e-mail is rejected or not
+		# so we assume that it could be rejected for two reasons:
+		# - it contains a virus what we already checked
+		# - it's a SPAM
+		status = re.search( "hop=\"(.+?)\"", line )
+		if status and status.groups()[ 0 ] != "accepted":
+			data[ "spam" ][ "eset" ] += 1
+
+		continue
+
+	# Exim log lines (without the exim[nnn]: [n/n] SpamAssassin lines)
+	if "exim[" in line  and not re.search( "exim\[\d+\]: \[\d+", line ):
+		# don't count the ESET scanned messages twice
+		if " <= " in line and ( not ESET_MDA or ( ESET_MDA and ESET_MDA_STRING in line ) ):
+			data[ "ham" ] += 1
 			continue
 
-	if " authenticator failed for " in line:
-		auth_failed += 1
+		if EXIM_SPAM_STRING in line:
+			data[ "spam" ][ "exim" ] += 1
+			continue
+
+		if " rejected after DATA: " in line:
+			is_spam = re.search( "This message is possibly spam! \\((\d+)", line )
+			if is_spam and int( is_spam.groups()[ 0 ] ) < 900:
+				data[ "spam" ][ "spamassassin" ] += 1
+				continue
+
+			if "This message contains a virus" in line and not "Eicar-Test-Signature" in line:
+				data[ "virus" ][ "clamav" ] += 1
+				continue
+
+		if " authenticator failed for " in line:
+			data[ "auth_failed" ] += 1
+			continue
+
 		continue
 
 
-position = log_file.tell()
+data[ "position" ] = log_file.tell()
 log_file.close()
 
 # create nice output for Prometheus
 print( "# HELP exim_requests Exim requests" )
 print( "# TYPE exim_requests counter" )
-print( "exim_requests{type=\"ham\"} %d" % ( ham ) )
-print( "exim_requests{type=\"spam\"} %d" % ( spam ) )
-print( "exim_requests{type=\"virus\"} %d" % ( virus ) )
-print( "exim_requests{type=\"auth_failed\"} %d" % ( auth_failed ) )
+print( "exim_requests{type=\"ham\"} %d" % ( data[ "ham" ] ) )
+print( "exim_requests{type=\"spam\"} %d" % ( data[ "spam" ][ "exim" ] + data[ "spam" ][ "spamassassin" ] ) )
+print( "exim_requests{type=\"virus\"} %d" % ( data[ "virus" ][ "clamav" ] ) )
+print( "exim_requests{type=\"auth_failed\"} %d" % ( data[ "auth_failed" ] ) )
+
+print( "# HELP exim_spam Number of SPAMs filtered by different sub-systems" )
+print( "# TYPE exim_spam counter" )
+print( "exim_spam{type=\"exim\"} %d" % ( data[ "spam" ][ "exim" ] ) )
+print( "exim_spam{type=\"spamassassin\"} %d" % ( data[ "spam" ][ "spamassassin" ] ) )
+if ESET_MDA:
+	print( "exim_spam{type=\"eset\"} %d" % ( data[ "spam" ][ "eset" ] ) )
+
+print( "# HELP exim_virus Number of viruses filtered by different sub-systems" )
+print( "# TYPE exim_virus counter" )
+print( "exim_virus{type=\"clamav\"} %d" % ( data[ "virus" ][ "clamav" ] ) )
+if ESET_MDA:
+	print( "exim_virus{type=\"eset\"} %d" % ( data[ "virus" ][ "eset" ] ) )
 
 # update state file with the actual status
-state_file = open( STATE_FILE, "w" )
-state_file.write( "%d:%d:%d:%d:%d\n" % ( position, ham, spam, virus, auth_failed ) )
-state_file.close()
+with open( STATE_FILE, "w" ) as state_file:
+	json.dump( data, state_file, sort_keys = True )
