@@ -34,7 +34,7 @@ if os.path.isfile( STATE_FILE ):
 # check if the log is rotated
 if os.stat( LOG_FILE ).st_size < data[ "position" ]:
 	# FIXME: search for the previous log file (it's not so trivial)
-	position = 0
+	data[ "position" ] = 0
 
 # open log and seek to the position
 log_file = open( LOG_FILE, "r" )
