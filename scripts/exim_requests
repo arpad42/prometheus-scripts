@@ -20,6 +20,7 @@ data[ "spam" ][ "spamassassin" ] = 0
 data[ "virus" ] = {}
 data[ "virus" ][ "clamav" ] = 0
 data[ "auth_failed" ] = 0
+data[ "exim_spam_acl" ] = {}
 
 # add ESET counters if necessary
 if ESET_MDA:
@@ -29,7 +30,10 @@ if ESET_MDA:
 # open state file to read status
 if os.path.isfile( STATE_FILE ):
 	with open( STATE_FILE, "r" ) as state_file:
-		data = json.load( state_file )
+		saved_state = json.load( state_file )
+
+	# update the internal state with the saved state
+	data.update( saved_state )
 
 # check if the log is rotated
 if os.stat( LOG_FILE ).st_size < data[ "position" ]:
@@ -70,6 +74,12 @@ for line in log_file:
 
 		if EXIM_SPAM_STRING in line:
 			data[ "spam" ][ "exim" ] += 1
+			has_acl = re.search( EXIM_SPAM_STRING + " (.+)$", line )
+			if has_acl:
+				acl = has_acl.groups()[ 0 ]
+				if not acl in data[ "exim_spam_acl" ]:
+					data[ "exim_spam_acl" ][ acl ] = 0
+				data[ "exim_spam_acl" ][ acl ] += 1
 			continue
 
 		if " rejected after DATA: " in line:
@@ -96,8 +106,8 @@ log_file.close()
 print( "# HELP exim_requests Exim requests" )
 print( "# TYPE exim_requests counter" )
 print( "exim_requests{type=\"ham\"} %d" % ( data[ "ham" ] ) )
-print( "exim_requests{type=\"spam\"} %d" % ( data[ "spam" ][ "exim" ] + data[ "spam" ][ "spamassassin" ] ) )
-print( "exim_requests{type=\"virus\"} %d" % ( data[ "virus" ][ "clamav" ] ) )
+print( "exim_requests{type=\"spam\"} %d" % ( sum( data[ "spam" ].values() ) ) )
+print( "exim_requests{type=\"virus\"} %d" % ( sum( data[ "virus" ].values() ) ) )
 print( "exim_requests{type=\"auth_failed\"} %d" % ( data[ "auth_failed" ] ) )
 
 print( "# HELP exim_spam Number of SPAMs filtered by different sub-systems" )
@@ -112,6 +122,12 @@ print( "# TYPE exim_virus counter" )
 print( "exim_virus{type=\"clamav\"} %d" % ( data[ "virus" ][ "clamav" ] ) )
 if ESET_MDA:
 	print( "exim_virus{type=\"eset\"} %d" % ( data[ "virus" ][ "eset" ] ) )
+
+
+print( "# HELP exim_spam_acl Number of SPAMs filtered by different sub-systems" )
+print( "# TYPE exim_spam_acl counter" )
+for key in data[ "exim_spam_acl" ]:
+	print( "exim_spam_acl{acl=\"%s\"} %d" % ( key, data[ "exim_spam_acl" ][ key ] ) )
 
 # update state file with the actual status
 with open( STATE_FILE, "w" ) as state_file:
