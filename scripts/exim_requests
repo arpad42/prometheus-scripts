@@ -49,8 +49,8 @@ for line in log_file:
 	if ESET_MDA and "esets_daemon[" in line and "summ[" in line:
 
 		# check if it contained a virus or not
-		has_virus = re.search( "virus=\"(.+?)\"", line )
-		if has_virus and has_virus.groups()[ 0 ] != "is OK":
+		has_virus = re.search( "virus=\"(.*?)\"", line )
+		if has_virus and not ( has_virus.groups()[ 0 ] == "is OK" or has_virus.groups()[ 0 ] == "" ):
 			data[ "virus" ][ "eset" ] += 1
 			continue
 
