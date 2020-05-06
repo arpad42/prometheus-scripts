@@ -45,7 +45,6 @@ do
 
 			[[ "$MAILBOX" =~ $TRASH_REGEX ]] && (( TRASH += MSGS ))
 		else
-			echo "Oooooooooooooops"
 			(( BAD_LINES++ ))
 		fi
 	done < <(doveadm mailbox status -u "$LOCAL_PART@$DOMAIN" "messages unseen vsize" "*")

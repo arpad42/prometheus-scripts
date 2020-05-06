@@ -63,8 +63,6 @@ do
 		monitorOpCompleted ) echo "slapd_operations{operation=\"${OPERATION,,}\",status=\"completed\"} $VALUE" ;;
 	esac
 done
-exit
-
 
 OPERATION_OBJ="$(get_ldap_obj "cn=Operations,cn=Monitor" base "objectClass=*")"
 echo "slapd_operations_total{type=\"initiated\"} $(get_field monitorOpInitiated <<< "$OPERATION_OBJ")"
