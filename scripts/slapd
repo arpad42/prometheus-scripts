@@ -1,0 +1,80 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+# common arguments
+DATABASE_NUM="2"
+LDAPSEARCH_ARGS=(
+	"-Y" "EXTERNAL"
+	"-H" "ldapi:///"
+)
+
+### Helper functions
+get_field()
+{
+	grep -P "^$1:" | { read KEY VALUE; echo "$VALUE"; }
+}
+
+get_ldap_obj()
+{
+	ldapsearch "${LDAPSEARCH_ARGS[@]}" -b "$1" -s "$2" "$3" "*" "+" 2> /dev/null
+}
+
+### Main code
+# connections
+echo "# HELP slapd_connections The number of active connections"
+echo "# TYPE slapd_connections gauge"
+echo "slapd_connections $(get_ldap_obj "cn=Current,cn=Connections,cn=Monitor" base "objectClass=*" | get_field monitorCounter)"
+
+echo "# HELP slapd_connections_total The number of connections so far"
+echo "# TYPE slapd_connections_total counter"
+echo "slapd_connections_total $(get_ldap_obj "cn=Total,cn=Connections,cn=Monitor" base "objectClass=*" | get_field monitorCounter)"
+
+# database
+echo "# HELP slapd_db_entries The number of the database entries"
+echo "# TYPE slapd_db_entries gauge"
+echo "slapd_db_entries $(get_ldap_obj "cn=Database 2,cn=Databases,cn=Monitor" base "objectClass=*" | get_field olmMDBEntries)"
+
+# traffic
+while read CN METRIC_POSTFIX HELP_WORD
+do
+	echo "# HELP slapd_sent_$METRIC_POSTFIX The number of $HELP_WORD sent by the LDAP server"
+	echo "# TYPE slapd_sent_$METRIC_POSTFIX counter"
+	echo "slapd_sent_$METRIC_POSTFIX $(get_ldap_obj "cn=$CN,cn=Statistics,cn=Monitor" base "objectClass=*" | get_field monitorCounter)"
+done <<EOF
+	Bytes		bytes		bytes
+	PDU		pdus		PDUs
+	Referrals	referrals	Referrals
+	Entries		entries		Entries
+EOF
+
+# operations
+# this is a bit different to save a lot of ldapsearch executions
+echo "# HELP slapd_operations The number of LDAP operations"
+echo "# TYPE slapd_operations counter"
+
+OPERATION=""
+get_ldap_obj "cn=Operations,cn=Monitor" one "objectClass=*" | grep -P "^(cn|monitorOpInitiated|monitorOpCompleted):" | while IFS=": " read KEY VALUE
+do
+	case "$KEY" in
+		cn ) OPERATION="$VALUE" ;;
+		monitorOpInitiated ) echo "slapd_operations{operation=\"${OPERATION,,}\",status=\"initiated\"} $VALUE" ;;
+		monitorOpCompleted ) echo "slapd_operations{operation=\"${OPERATION,,}\",status=\"completed\"} $VALUE" ;;
+	esac
+done
+exit
+
+
+OPERATION_OBJ="$(get_ldap_obj "cn=Operations,cn=Monitor" base "objectClass=*")"
+echo "slapd_operations_total{type=\"initiated\"} $(get_field monitorOpInitiated <<< "$OPERATION_OBJ")"
+echo "slapd_operations_total{type=\"completed\"} $(get_field monitorOpCompleted <<< "$OPERATION_OBJ")"
+
+# waiters
+echo "# HELP slapd_waiters The number of waiters"
+echo "# TYPE slapd_waiters counter"
+
+for KIND in Read Write
+do
+	echo "slapd_waiters{kind=\"${KIND,,}\"} $(get_ldap_obj "cn=$KIND,cn=Waiters,cn=Monitor" base "objectClass=*" | get_field monitorCounter)"
+done
