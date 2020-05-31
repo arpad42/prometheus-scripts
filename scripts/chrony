@@ -1,0 +1,39 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+declare -A STATUS=()
+
+while read LINE
+do
+	# some Bash magic
+	KEY="${LINE%%:*}"
+	TRAILING_SPACES="${KEY##*[![:space:]]}"
+	KEY="${KEY%$TRAILING_SPACES}"
+
+	VALUE="${LINE##*: }"
+
+	STATUS["$KEY"]="$VALUE"
+done < <(chronyc tracking | tr -d '\r')
+
+# is it synchronized?
+[[ "${STATUS["Leap status"]}" == "Normal" ]] && IN_SYNC="1" || IN_SYNC="0"
+
+echo "# chrony_in_sync HELP The actual state of the time synchronization"
+echo "# chrony_in_sync TYPE gauge"
+
+echo "chrony_in_sync $IN_SYNC"
+
+# if it's synchronized check the time difference
+if (( IN_SYNC == 1 ))
+then
+	echo "# chrony_system_time HELP The system time vs the NTP time"
+	echo "# chrony_system_time TYPE gauge"
+
+	# NOTE: unquoted '*' below is intentional glob-match
+	[[ "${STATUS["System time"]}" == *"fast of NTP time" ]] && SIGNUM="" || SIGNUM="-"
+	VALUE="${STATUS["System time"]%% seconds*}"
+
+	echo "chrony_system_time $SIGNUM$VALUE"
+fi
