@@ -1,0 +1,18 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+BAYES_DB_PATH="/var/lib/spamassassin/bayes/"
+
+echo "# HELP spamd_bayes_messages The number of messages in the Bayes database"
+echo "# TYPE spamd_bayes_messages gauge"
+
+while read COL1 COL2 VALUE COL4 DESCRIPTION
+do
+	DESCRIPTION="${DESCRIPTION#non-token data: }"
+	case "$DESCRIPTION" in
+		nham ) echo "spamd_bayes_messages{type=\"ham\"} $VALUE" ;;
+		nspam ) echo "spamd_bayes_messages{type=\"spam\"} $VALUE" ;;
+	esac
+done < <(sa-learn --dbpath "$BAYES_DB_PATH" --dump magic)
