@@ -1,0 +1,73 @@
+#!/bin/bash
+
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+SERVER_STATUS_URL="https://localhost/server-status?auto"
+
+# show all the metrics
+echo "# apache_bytes_total HELP The data transmitted"
+echo "# apache_bytes_total TYPE counter"
+
+echo "# apache_processes HELP Apache processes"
+echo "# apache_processes TYPE gauge"
+
+echo "# apache_requests_total HELP The number of the requests"
+echo "# apache_requests_total TYPE counter"
+
+echo "# apache_workers HELP Apache workers"
+echo "# apache_workers TYPE gauge"
+
+# worker statuses
+declare -A WORKERS=(
+	[idle]=0
+	[startup]=0
+	[read]=0
+	[reply]=0
+	[keepalive]=0
+	[dns]=0
+	[closing]=0
+	[logging]=0
+	[graceful_stop]=0
+	[idle_cleanup]=0
+	[open_slot]=0
+)
+
+# parse the server-status output
+while read LINE
+do
+	KEY="${LINE%%:*}"
+	VALUE="${LINE#*: }"
+
+	[[ -z "$KEY" ]] && continue
+	[[ -z "$VALUE" ]] && continue
+
+	case "$KEY" in
+		"Total Accesses" ) echo "apache_requests $VALUE" ;;
+		"Total kBytes" ) echo "apache_bytes $(( $VALUE * 1024 ))" ;;
+		"Processes" ) echo "apache_processes $VALUE" ;;
+		"Scoreboard" )
+			while read -n1 STATUS
+			do
+				case "$STATUS" in
+					"_" ) (( WORKERS[idle]++ )) ;;
+					"S" ) (( WORKERS[startup]++ )) ;;
+					"R" ) (( WORKERS[read]++ )) ;;
+					"W" ) (( WORKERS[reply]++ )) ;;
+					"K" ) (( WORKERS[keepalive]++ )) ;;
+					"D" ) (( WORKERS[dns]++ )) ;;
+					"C" ) (( WORKERS[closing]++ )) ;;
+					"L" ) (( WORKERS[logging]++ )) ;;
+					"G" ) (( WORKERS[graceful_stop]++ )) ;;
+					"I" ) (( WORKERS[idle_cleanup]++ )) ;;
+					"." ) (( WORKERS[open_slot]++ )) ;;
+				esac
+			done <<< "$VALUE"
+
+			for STATUS in "${!WORKERS[@]}"
+			do
+				echo "apache_workers{status=\"$STATUS\"} ${WORKERS[$STATUS]}"
+			done
+			;;
+	esac
+done < <(curl -s -k -L "$SERVER_STATUS_URL")
