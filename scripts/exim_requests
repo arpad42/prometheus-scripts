@@ -66,7 +66,7 @@ for line in log_file:
 		continue
 
 	# Exim log lines (without the exim[nnn]: [n/n] SpamAssassin lines)
-	if "exim[" in line  and not re.search( "exim\[\d+\]: \[\d+", line ):
+	if "exim[" in line  and not re.search( r"exim\[\d+\]: \[\d+", line ):
 		# don't count the ESET scanned messages twice
 		if " <= " in line and ( not ESET_MDA or ( ESET_MDA and ESET_MDA_STRING in line ) ):
 			data[ "ham" ] += 1
@@ -83,7 +83,7 @@ for line in log_file:
 			continue
 
 		if " rejected after DATA: " in line:
-			is_spam = re.search( "This message is possibly spam! \\((\d+)", line )
+			is_spam = re.search( r"This message is possibly spam! \((\d+)", line )
 			if is_spam and int( is_spam.groups()[ 0 ] ) < 900:
 				data[ "spam" ][ "spamassassin" ] += 1
 				continue
